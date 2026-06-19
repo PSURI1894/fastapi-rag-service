@@ -1,0 +1,62 @@
+[project]
+name = "fastapi-rag-service"
+version = "0.1.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, API-key auth, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+]
+
+# uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Tell the build backend where the importable package lives (the `src/` layout).
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# `auto` means every `async def test_*` is run on the event loop without a marker.
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F = pyflakes+pycodestyle, I = isort, UP = pyupgrade, B = bugbear,
+# ASYNC = async pitfalls, SIM = simplify. A sensible "strict but not noisy" set.
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's whole DI model relies on calling Depends()/Header()/etc. in argument
+# defaults. That's intentional, not the bug B008 warns about — whitelist them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Header",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
