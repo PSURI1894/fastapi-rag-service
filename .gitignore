@@ -12,6 +12,11 @@ __pycache__/
 # Secrets & local config
 .env
 
+# Local SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
 # OS / editor
 .DS_Store
 .idea/

@@ -23,9 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import get_settings
+from app.db import create_all, create_engine, create_sessionmaker
 from app.logging_config import configure_logging
-from app.repositories.conversations import InMemoryConversationRepository
-from app.repositories.users import InMemoryUserRepository, User
+from app.repositories.users import SqlAlchemyUserRepository, User
 from app.routers import auth, chat, health
 from app.security import hash_password
 from app.services.rag import RagService
@@ -38,26 +38,41 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    # Construct shared, long-lived objects ONCE. With a real DB this is where you
-    # open the connection pool.
-    app.state.repository = InMemoryConversationRepository()
+    # Singletons that live for the whole process: the RAG service, and the DB
+    # engine + session factory (the engine owns ONE connection pool — never make a
+    # new engine per request).
     app.state.rag_service = RagService(response_delay_ms=settings.llm_response_delay_ms)
+    engine = create_engine(settings)
+    app.state.engine = engine
+    app.state.sessionmaker = create_sessionmaker(engine)
 
-    # Seed the user store with one known user so there are credentials to log in
-    # with. We hash the password at startup — the plaintext never gets stored.
-    user_repository = InMemoryUserRepository()
-    await user_repository.add(
-        User(
-            username=settings.demo_username,
-            hashed_password=hash_password(settings.demo_password),
-            full_name="Demo User",
-        )
+    # Local/dev convenience: build the schema straight from the ORM metadata. In
+    # production set DB_AUTO_CREATE=false and run `alembic upgrade head` instead.
+    if settings.db_auto_create:
+        await create_all(engine)
+
+    # Seed one known user so there are credentials to log in with. Idempotent: only
+    # inserts if missing, so restarts don't fail on a duplicate primary key.
+    async with app.state.sessionmaker() as session:
+        users = SqlAlchemyUserRepository(session)
+        if await users.get_by_username(settings.demo_username) is None:
+            await users.add(
+                User(
+                    username=settings.demo_username,
+                    hashed_password=hash_password(settings.demo_password),
+                    full_name="Demo User",
+                )
+            )
+            await session.commit()
+
+    # Log the DB backend, never the full URL (it may carry a password).
+    db_backend = settings.database_url.split("://", 1)[0]
+    logger.info(
+        "startup complete env=%s db=%s version=%s", settings.app_env, db_backend, __version__
     )
-    app.state.user_repository = user_repository
-
-    logger.info("startup complete env=%s version=%s", settings.app_env, __version__)
     yield
     # --- shutdown ---
+    await engine.dispose()
     logger.info("shutdown complete")
 
 

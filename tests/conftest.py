@@ -9,6 +9,7 @@ Fix: enter the app's own lifespan context manually with
 repo + RAG service) your production server runs, so tests exercise real wiring.
 """
 
+import os
 from collections.abc import AsyncIterator
 
 import pytest_asyncio
@@ -20,12 +21,20 @@ from app.main import create_app
 
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[AsyncClient]:
+    # Each test gets a fresh in-memory SQLite DB: fast, hermetic, no files left
+    # behind. The engine factory uses a StaticPool for in-memory URLs so the schema
+    # (created in lifespan) survives across calls within the test.
+    os.environ["DATABASE_URL"] = "sqlite+aiosqlite://"
+    os.environ["DB_AUTO_CREATE"] = "true"
+    get_settings.cache_clear()  # drop any cached Settings so the env above wins
+
     app = create_app()
-    # Run startup (populate app.state, seed the demo user), serve, then shut down.
+    # Run startup (create schema + seed the demo user), serve, then shut down.
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture

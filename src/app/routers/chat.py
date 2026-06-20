@@ -23,9 +23,13 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.dependencies import get_rag_service, get_repository
-from app.repositories.conversations import ConversationRepository
+from app.dependencies import get_rag_service, get_repository, get_sessionmaker
+from app.repositories.conversations import (
+    ConversationRepository,
+    SqlAlchemyConversationRepository,
+)
 from app.schemas import ChatRequest, ChatResponse, Message
 from app.security import get_current_user
 from app.services.rag import RagService
@@ -74,12 +78,23 @@ def _sse(event: str, data: dict[str, object]) -> str:
 @router.post("/stream")
 async def chat_stream(
     req: ChatRequest,
-    repo: ConversationRepository = Depends(get_repository),
+    sessionmaker: async_sessionmaker[AsyncSession] = Depends(get_sessionmaker),
     rag: RagService = Depends(get_rag_service),
 ) -> StreamingResponse:
-    """Streaming chat over SSE: meta (citations) first, then tokens, then done."""
-    conversation_id = await _resolve_conversation(req, repo)
-    await repo.add_message(conversation_id, "user", req.question)
+    """Streaming chat over SSE: meta (citations) first, then tokens, then done.
+
+    We take the `sessionmaker`, not a request-scoped session, on purpose: the
+    generator below runs *while the response streams*, after the request scope (and
+    its session) would already be closed. So we open one short session here for the
+    upfront writes, and a second one inside the generator for the final write.
+    """
+    # Resolve the conversation + persist the user's message before streaming starts,
+    # so a bad conversation_id still returns a clean 404 (not a half-streamed error).
+    async with sessionmaker() as session:
+        repo = SqlAlchemyConversationRepository(session)
+        conversation_id = await _resolve_conversation(req, repo)
+        await repo.add_message(conversation_id, "user", req.question)
+        await session.commit()
 
     async def event_generator() -> AsyncIterator[str]:
         # 1) Send retrieval results up front so the UI can show sources immediately.
@@ -95,8 +110,11 @@ async def chat_stream(
             collected.append(token)
             yield _sse("token", {"text": token})
 
-        # 3) Persist the full answer and tell the client we're finished.
-        await repo.add_message(conversation_id, "assistant", "".join(collected).strip())
+        # 3) Persist the full answer in its OWN session, then signal completion.
+        async with sessionmaker() as session:
+            repo = SqlAlchemyConversationRepository(session)
+            await repo.add_message(conversation_id, "assistant", "".join(collected).strip())
+            await session.commit()
         yield _sse("done", {"conversation_id": conversation_id})
 
     return StreamingResponse(

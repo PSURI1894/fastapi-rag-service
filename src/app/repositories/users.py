@@ -13,6 +13,9 @@ against a real database later requires no changes anywhere else.
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import UserModel
 
 
 class User(BaseModel):
@@ -39,3 +42,33 @@ class InMemoryUserRepository(UserRepository):
 
     async def add(self, user: User) -> None:
         self._users[user.username] = user
+
+
+class SqlAlchemyUserRepository(UserRepository):
+    """Durable user store backed by an AsyncSession. Maps the `UserModel` row to
+    the `User` domain model (and back) — the session owner handles commit/rollback."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_username(self, username: str) -> User | None:
+        row = await self._session.get(UserModel, username)
+        if row is None:
+            return None
+        return User(
+            username=row.username,
+            hashed_password=row.hashed_password,
+            full_name=row.full_name,
+            disabled=row.disabled,
+        )
+
+    async def add(self, user: User) -> None:
+        self._session.add(
+            UserModel(
+                username=user.username,
+                hashed_password=user.hashed_password,
+                full_name=user.full_name,
+                disabled=user.disabled,
+            )
+        )
+        await self._session.flush()

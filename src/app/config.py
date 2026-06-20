@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     llm_response_delay_ms: int = Field(default=40, ge=0)
 
+    # --- Database ---
+    # SQLAlchemy async URL. Default is a zero-setup local SQLite file. For Postgres:
+    #   postgresql+asyncpg://user:password@localhost:5432/ragdb
+    database_url: str = "sqlite+aiosqlite:///./app.db"
+    # Create tables from the ORM metadata on startup. Handy for local/SQLite; in
+    # production set this False and manage the schema with Alembic migrations.
+    db_auto_create: bool = True
+    # Echo SQL to the log — flip on when you want to SEE the queries SQLAlchemy emits.
+    db_echo: bool = False
+
     # --- JWT auth ---
     # The signing secret. In prod, generate with `openssl rand -hex 32` and inject
     # via env — NEVER commit a real one. min_length guards against a weak key.

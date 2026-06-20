@@ -1,0 +1,29 @@
+# Local Postgres for developing against the "real" production database.
+#
+#   docker compose up -d
+#   # point the app at it:
+#   export DATABASE_URL="postgresql+asyncpg://rag:ragpw@localhost:5432/ragdb"
+#   export DB_AUTO_CREATE=false
+#   uv run alembic upgrade head        # create the schema via migrations
+#   uv run uvicorn app.main:app --reload
+#
+# (PowerShell: use `$env:DATABASE_URL = "..."` instead of `export`.)
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ragpw
+      POSTGRES_DB: ragdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d ragdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

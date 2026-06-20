@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.2.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.3.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +12,10 @@ dependencies = [
     "pyjwt>=2.10",
     "pwdlib[argon2]>=0.2.1",
     "python-multipart>=0.0.18",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14",
+    "aiosqlite>=0.20",      # async SQLite driver (default / tests)
+    "asyncpg>=0.30",        # async Postgres driver (production)
 ]
 
 # uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).
@@ -41,6 +45,8 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# Alembic migration files follow their own generated conventions — don't lint them.
+extend-exclude = ["alembic"]
 
 [tool.ruff.lint]
 # E/F = pyflakes+pycodestyle, I = isort, UP = pyupgrade, B = bugbear,
