@@ -1,21 +1,17 @@
-"""Chat endpoints — the heart of the service.
+"""Chat endpoints — the heart of the service, now scoped per user.
 
-Three routes, all requiring auth (declared once at the router level):
-    POST /chat            -> blocking: return the full answer as JSON
-    POST /chat/stream     -> streaming: push tokens as Server-Sent Events (SSE)
-    GET  /chat/{id}/history -> read a conversation back
+    GET  /chat                 -> list the caller's conversations
+    POST /chat                 -> blocking: full answer as JSON
+    POST /chat/stream          -> streaming: tokens as Server-Sent Events (SSE)
+    GET  /chat/{id}/history    -> read one conversation back
 
-The streaming route is the important one for LLM serving. SSE is a dead-simple
-text protocol over a normal HTTP response: you keep the connection open and write
-chunks shaped like:
+Every route takes `current_user` (via the get_current_user dependency, which also
+enforces auth) and only ever touches conversations that user owns. Accessing
+someone else's conversation returns 403; a missing one returns 404.
 
-    event: token\\n
-    data: {"text": "Based "}\\n
-    \\n                       <- blank line terminates one event
-
-Browsers consume this natively via `EventSource`; any HTTP client can read it as
-a stream. We use Starlette's `StreamingResponse` driven by an async generator —
-no extra library needed.
+SSE recap: keep the HTTP response open and write frames shaped like
+`event: token\\n` + `data: {...}\\n` + a blank line. We drive it with Starlette's
+StreamingResponse over an async generator — no extra library.
 """
 
 import json
@@ -30,37 +26,60 @@ from app.repositories.conversations import (
     ConversationRepository,
     SqlAlchemyConversationRepository,
 )
-from app.schemas import ChatRequest, ChatResponse, Message
+from app.schemas import ChatRequest, ChatResponse, ConversationSummary, Message, UserPublic
 from app.security import get_current_user
 from app.services.rag import RagService
 
-# dependencies=[Depends(get_current_user)] applies JWT auth to EVERY route below.
-# (We don't need the user object in these handlers yet — we only need to require a
-# valid token. Inject `current_user: UserPublic = Depends(get_current_user)` into a
-# handler when you want to scope data per user — that's the next enhancement.)
-router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-async def _resolve_conversation(req: ChatRequest, repo: ConversationRepository) -> str:
-    """Continue the given conversation, or start a fresh one. 404 if the id is bogus."""
+async def _authorize_conversation(
+    conversation_id: str, owner_username: str, repo: ConversationRepository
+) -> None:
+    """Allow access only to the caller's own conversation."""
+    owner = await repo.get_owner(conversation_id)
+    if owner is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"conversation '{conversation_id}' not found",
+        )
+    if owner != owner_username:
+        # 403: it exists, but it's not yours. (Some APIs return 404 here instead, to
+        # avoid revealing that the id exists at all — a deliberate security choice.)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="you do not have access to this conversation",
+        )
+
+
+async def _resolve_conversation(
+    req: ChatRequest, owner_username: str, repo: ConversationRepository
+) -> str:
+    """Continue the caller's conversation, or start a new one they own."""
     if req.conversation_id is not None:
-        if not await repo.exists(req.conversation_id):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"conversation '{req.conversation_id}' not found",
-            )
+        await _authorize_conversation(req.conversation_id, owner_username, repo)
         return req.conversation_id
-    return await repo.create()
+    return await repo.create(owner_username)
+
+
+@router.get("", response_model=list[ConversationSummary])
+async def list_conversations(
+    current_user: UserPublic = Depends(get_current_user),
+    repo: ConversationRepository = Depends(get_repository),
+) -> list[ConversationSummary]:
+    """List only the conversations owned by the authenticated user."""
+    return await repo.list_for_owner(current_user.username)
 
 
 @router.post("", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
+    current_user: UserPublic = Depends(get_current_user),
     repo: ConversationRepository = Depends(get_repository),
     rag: RagService = Depends(get_rag_service),
 ) -> ChatResponse:
     """Blocking chat: retrieve, generate the whole answer, persist, return JSON."""
-    conversation_id = await _resolve_conversation(req, repo)
+    conversation_id = await _resolve_conversation(req, current_user.username, repo)
     await repo.add_message(conversation_id, "user", req.question)
 
     citations = await rag.retrieve(req.question)
@@ -78,21 +97,22 @@ def _sse(event: str, data: dict[str, object]) -> str:
 @router.post("/stream")
 async def chat_stream(
     req: ChatRequest,
+    current_user: UserPublic = Depends(get_current_user),
     sessionmaker: async_sessionmaker[AsyncSession] = Depends(get_sessionmaker),
     rag: RagService = Depends(get_rag_service),
 ) -> StreamingResponse:
     """Streaming chat over SSE: meta (citations) first, then tokens, then done.
 
-    We take the `sessionmaker`, not a request-scoped session, on purpose: the
-    generator below runs *while the response streams*, after the request scope (and
-    its session) would already be closed. So we open one short session here for the
-    upfront writes, and a second one inside the generator for the final write.
+    Uses the `sessionmaker` (not a request-scoped session) because the generator
+    runs while the response streams — after the request scope, and its session,
+    would already be gone. So we open one short session for the upfront writes and
+    a second inside the generator for the final write.
     """
-    # Resolve the conversation + persist the user's message before streaming starts,
-    # so a bad conversation_id still returns a clean 404 (not a half-streamed error).
+    # Authorize + persist the user's message before streaming starts, so a bad or
+    # forbidden conversation_id returns a clean 404/403 (not a half-streamed error).
     async with sessionmaker() as session:
         repo = SqlAlchemyConversationRepository(session)
-        conversation_id = await _resolve_conversation(req, repo)
+        conversation_id = await _resolve_conversation(req, current_user.username, repo)
         await repo.add_message(conversation_id, "user", req.question)
         await session.commit()
 
@@ -131,11 +151,8 @@ async def chat_stream(
 @router.get("/{conversation_id}/history", response_model=list[Message])
 async def history(
     conversation_id: str,
+    current_user: UserPublic = Depends(get_current_user),
     repo: ConversationRepository = Depends(get_repository),
 ) -> list[Message]:
-    if not await repo.exists(conversation_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"conversation '{conversation_id}' not found",
-        )
+    await _authorize_conversation(conversation_id, current_user.username, repo)
     return await repo.history(conversation_id)

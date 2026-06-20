@@ -43,6 +43,11 @@ class ConversationModel(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # Each conversation belongs to the user who created it. Indexed because we
+    # filter by it ("list my conversations"); FK ties it to a real user row.
+    owner_username: Mapped[str] = mapped_column(
+        String(255), ForeignKey("users.username"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

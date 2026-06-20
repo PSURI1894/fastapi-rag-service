@@ -4,6 +4,8 @@ These double as documentation — read them to see exactly how a client uses the
 Every protected call now carries a JWT via the `auth_headers` fixture (conftest.py).
 """
 
+from collections.abc import Awaitable, Callable
+
 from httpx import AsyncClient
 
 
@@ -109,3 +111,60 @@ async def test_streaming_emits_sse_events(
     assert "event: meta" in text
     assert "event: token" in text
     assert "event: done" in text
+
+
+async def test_cannot_read_another_users_conversation(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    make_user: Callable[[str, str], Awaitable[dict[str, str]]],
+) -> None:
+    # demo creates a conversation...
+    created = await client.post(
+        "/chat", headers=auth_headers, json={"question": "What is the refund policy?"}
+    )
+    cid = created.json()["conversation_id"]
+
+    # ...a different user must not be able to read it.
+    mallory = await make_user("mallory", "mallory-password")
+    resp = await client.get(f"/chat/{cid}/history", headers=mallory)
+    assert resp.status_code == 403
+
+
+async def test_cannot_continue_another_users_conversation(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    make_user: Callable[[str, str], Awaitable[dict[str, str]]],
+) -> None:
+    created = await client.post(
+        "/chat", headers=auth_headers, json={"question": "What is the refund policy?"}
+    )
+    cid = created.json()["conversation_id"]
+
+    mallory = await make_user("mallory", "mallory-password")
+    resp = await client.post(
+        "/chat",
+        headers=mallory,
+        json={"question": "sneaking in", "conversation_id": cid},
+    )
+    assert resp.status_code == 403
+
+
+async def test_list_conversations_is_scoped_to_owner(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    make_user: Callable[[str, str], Awaitable[dict[str, str]]],
+) -> None:
+    # demo starts two conversations.
+    await client.post("/chat", headers=auth_headers, json={"question": "first?"})
+    await client.post("/chat", headers=auth_headers, json={"question": "second?"})
+
+    # bob starts one.
+    bob = await make_user("bob", "bob-password")
+    await client.post("/chat", headers=bob, json={"question": "bob's one?"})
+
+    mine = await client.get("/chat", headers=auth_headers)
+    assert mine.status_code == 200
+    assert len(mine.json()) == 2  # only demo's conversations
+
+    bobs = await client.get("/chat", headers=bob)
+    assert len(bobs.json()) == 1  # only bob's

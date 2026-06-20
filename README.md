@@ -7,9 +7,9 @@ keys** (and zero DB setup — it defaults to a local SQLite file), but the
 directly to a live LLM/RAG service.
 
 > Built to level up **advanced Python + FastAPI**: async, Pydantic v2, dependency
-> injection, **OAuth2 + JWT auth**, **async SQLAlchemy persistence (SQLite/Postgres)
-> with Alembic migrations**, SSE streaming, the service/repository split,
-> structured logging, middleware, and async testing.
+> injection, **OAuth2 + JWT auth**, **per-user authorization**, **async SQLAlchemy
+> persistence (SQLite/Postgres) with Alembic migrations**, SSE streaming, the
+> service/repository split, structured logging, middleware, and async testing.
 
 ---
 
@@ -78,6 +78,15 @@ curl -N -X POST http://127.0.0.1:8000/chat/stream \
   -d '{"question": "What is the refund window for damaged goods?"}'
 ```
 
+List **your** conversations (scoped to the authenticated user):
+
+```bash
+curl http://127.0.0.1:8000/chat -H "Authorization: Bearer $TOKEN"
+```
+
+Conversations are owned by their creator: reading or continuing someone else's
+conversation returns **403**, and a non-existent one returns **404**.
+
 > In the **/docs** UI, click **Authorize**, enter the username/password, and Swagger
 > will attach the Bearer token to every request for you.
 
@@ -138,7 +147,7 @@ uv run alembic revision --autogenerate -m "add X"   # create a new migration
 | [`services/rag.py`](src/app/services/rag.py) | Business logic; **async generators** for token streaming |
 | [`dependencies.py`](src/app/dependencies.py) | **Session-per-request** (`get_session` yield-dep) + per-request repositories |
 | [`routers/auth.py`](src/app/routers/auth.py) | **OAuth2 password flow**: `POST /auth/token` (login) + `GET /auth/me` |
-| [`routers/chat.py`](src/app/routers/chat.py) | Routing, `Depends`, validation, **SSE streaming** (its own DB session) |
+| [`routers/chat.py`](src/app/routers/chat.py) | **Per-user authorization** (own-conversation 403/404), a `GET /chat` listing, **SSE streaming** |
 | [`main.py`](src/app/main.py) | App factory, **lifespan** (opens engine, creates schema, seeds user), middleware |
 | [`alembic/`](alembic/) | Async migration env + the initial schema migration |
 | [`tests/`](tests/) | Async HTTP tests (in-memory SQLite) + `test_repository.py` (data layer in isolation) |
@@ -177,9 +186,10 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   `SqlAlchemyUserRepository` (SQLAlchemy 2.0 async; SQLite by default, Postgres via
   `asyncpg`) behind the SAME interfaces, with Alembic migrations. Routes/services
   unchanged; the DI moved to session-per-request. Data survives restarts.
-- [ ] **Rung 4 — Per-user data (authorization).** Now that requests carry an
-  identity, scope conversations to their owner: inject `current_user` into the
-  chat handlers and key conversations by user id (403 on someone else's data).
+- [x] **Rung 4 — Per-user data (authorization).** Conversations are owned;
+  handlers inject `current_user` and only touch the caller's data (403 on
+  someone else's, 404 if missing). Added `GET /chat` to list your own. Migration
+  0002 adds the `owner_username` column + index + FK.
 - [ ] **Rung 5 — Real RAG.** Replace the body of `services/rag.py` with a vector
   retriever (Chroma/pgvector) + `langchain-anthropic` streaming. The `async for`
   shape is already correct, so routes/tests stay put.
@@ -211,7 +221,7 @@ src/app/
   repositories/users.py     # UserRepository: in-memory + SQLAlchemy
   routers/health.py         # GET /health
   routers/auth.py           # POST /auth/token, GET /auth/me
-  routers/chat.py           # POST /chat, POST /chat/stream, GET /chat/{id}/history
+  routers/chat.py           # GET /chat (list), POST /chat, POST /chat/stream, GET /chat/{id}/history
 alembic/                    # migration environment + versions/
 alembic.ini                 # alembic config (URL comes from app settings)
 docker-compose.yml          # local Postgres for the production DB path

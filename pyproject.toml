@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.3.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.4.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

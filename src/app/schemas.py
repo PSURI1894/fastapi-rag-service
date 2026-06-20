@@ -41,6 +41,14 @@ class Message(BaseModel):
     created_at: datetime
 
 
+class ConversationSummary(BaseModel):
+    """One row in the "list my conversations" response."""
+
+    conversation_id: str
+    created_at: datetime
+    message_count: int
+
+
 class HealthResponse(BaseModel):
     status: str
     env: str

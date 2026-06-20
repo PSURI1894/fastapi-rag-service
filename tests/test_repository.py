@@ -1,6 +1,6 @@
 """Unit tests for the SQLAlchemy repositories, exercised directly against an
-in-memory SQLite database (no HTTP, no FastAPI). This is the data layer in
-isolation — fast and precise, complementing the end-to-end tests in test_chat.py.
+in-memory SQLite database (no HTTP, no FastAPI). The data layer in isolation —
+fast and precise, complementing the end-to-end tests in test_chat.py.
 """
 
 from collections.abc import AsyncIterator
@@ -27,11 +27,12 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 
 async def test_conversation_roundtrip(session: AsyncSession) -> None:
+    await SqlAlchemyUserRepository(session).add(User(username="demo", hashed_password="x"))
     repo = SqlAlchemyConversationRepository(session)
 
-    conversation_id = await repo.create()
-    assert await repo.exists(conversation_id) is True
-    assert await repo.exists("does-not-exist") is False
+    conversation_id = await repo.create("demo")
+    assert await repo.get_owner(conversation_id) == "demo"
+    assert await repo.get_owner("does-not-exist") is None
 
     await repo.add_message(conversation_id, "user", "hi")
     await repo.add_message(conversation_id, "assistant", "hello")
@@ -41,6 +42,26 @@ async def test_conversation_roundtrip(session: AsyncSession) -> None:
     assert [m.role for m in history] == ["user", "assistant"]
     assert history[0].content == "hi"
     assert history[0].created_at is not None  # timestamp was persisted
+
+
+async def test_list_for_owner_is_scoped(session: AsyncSession) -> None:
+    users = SqlAlchemyUserRepository(session)
+    await users.add(User(username="alice", hashed_password="x"))
+    await users.add(User(username="bob", hashed_password="x"))
+    repo = SqlAlchemyConversationRepository(session)
+
+    a1 = await repo.create("alice")
+    await repo.add_message(a1, "user", "hi")
+    await repo.create("alice")
+    await repo.create("bob")
+    await session.commit()
+
+    alice = await repo.list_for_owner("alice")
+    bob = await repo.list_for_owner("bob")
+    assert len(alice) == 2
+    assert len(bob) == 1
+    counts = {s.conversation_id: s.message_count for s in alice}
+    assert counts[a1] == 1  # the message count is computed in the query
 
 
 async def test_user_roundtrip(session: AsyncSession) -> None:
