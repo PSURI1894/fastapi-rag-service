@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.5.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.6.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -72,6 +72,8 @@ extend-immutable-calls = [
     "fastapi.Path",
     "fastapi.Body",
     "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
 ]
 
 [tool.mypy]

@@ -49,6 +49,24 @@ class ConversationSummary(BaseModel):
     message_count: int
 
 
+class DocumentAccepted(BaseModel):
+    """202 response from POST /documents — the work hasn't run yet."""
+
+    job_id: str
+    status: str
+
+
+class JobPublic(BaseModel):
+    """Status view of a background ingestion job (GET /jobs, GET /jobs/{id})."""
+
+    job_id: str
+    status: str
+    document_name: str
+    chunk_count: int | None = None
+    error: str | None = None
+    created_at: datetime
+
+
 class HealthResponse(BaseModel):
     status: str
     env: str

@@ -25,8 +25,9 @@ from app import __version__
 from app.config import get_settings
 from app.db import create_all, create_engine, create_sessionmaker
 from app.logging_config import configure_logging
+from app.repositories.jobs import InMemoryJobStore
 from app.repositories.users import SqlAlchemyUserRepository, User
-from app.routers import auth, chat, health
+from app.routers import auth, chat, documents, health
 from app.security import hash_password
 from app.services.rag import build_rag_service
 
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # engine + session factory (the engine owns ONE connection pool — never make a
     # new engine per request).
     app.state.rag_service = build_rag_service(settings)
+    app.state.job_store = InMemoryJobStore()
     engine = create_engine(settings)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
@@ -118,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(chat.router)
+    app.include_router(documents.router)
     return app
 
 

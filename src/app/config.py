@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     anthropic_max_tokens: int = Field(default=1024, ge=1)
     rag_top_k: int = Field(default=2, ge=1)
 
+    # --- Document ingestion (Rung 6) ---
+    chunk_words: int = Field(default=120, ge=1)
+    chunk_overlap: int = Field(default=20, ge=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

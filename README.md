@@ -9,8 +9,9 @@ architecture is identical either way; only the backend swaps.
 > Built to level up **advanced Python + FastAPI**: async, Pydantic v2, dependency
 > injection, **OAuth2 + JWT auth**, **per-user authorization**, **async SQLAlchemy
 > persistence (SQLite/Postgres) with Alembic migrations**, **real RAG (Chroma +
-> Claude) behind a pluggable backend**, SSE streaming, the service/repository
-> split, structured logging, middleware, and async testing.
+> Claude) behind a pluggable backend**, **background document ingestion (upload →
+> job → poll)**, SSE streaming, the service/repository split, structured logging,
+> middleware, and async testing.
 
 ---
 
@@ -87,6 +88,22 @@ curl http://127.0.0.1:8000/chat -H "Authorization: Bearer $TOKEN"
 
 Conversations are owned by their creator: reading or continuing someone else's
 conversation returns **403**, and a non-existent one returns **404**.
+
+**Upload a document** for background ingestion — returns **202** immediately with a
+job id; the chunking + embedding happens in the background:
+
+```bash
+echo "The flux capacitor needs 1.21 gigawatts." > note.txt
+JOB=$(curl -s -X POST http://127.0.0.1:8000/documents \
+  -H "Authorization: Bearer $TOKEN" -F "file=@note.txt" \
+  | python -c "import sys,json;print(json.load(sys.stdin)['job_id'])")
+
+curl http://127.0.0.1:8000/jobs/$JOB -H "Authorization: Bearer $TOKEN"   # poll status
+```
+
+Poll `GET /jobs/{id}` until `status` is `succeeded`; then the uploaded content is
+retrievable through `/chat`. (On Windows, prefer the **/docs** UI for file uploads —
+native `curl.exe` mishandles `@`-file paths.)
 
 > In the **/docs** UI, click **Authorize**, enter the username/password, and Swagger
 > will attach the Bearer token to every request for you.
@@ -175,6 +192,9 @@ real call downloads a ~80 MB local embedding model (one-time).
 | [`repositories/conversations.py`](src/app/repositories/conversations.py) | **Two impls of one interface**: in-memory *and* `SqlAlchemyConversationRepository` |
 | [`repositories/users.py`](src/app/repositories/users.py) | User store (in-memory + SQLAlchemy); internal `User` vs API `UserPublic` |
 | [`services/rag.py`](src/app/services/rag.py) | **Pluggable RAG**: `RagService` ABC + mock & Anthropic backends, a factory, **async generators** for token streaming, **optional deps via lazy imports** |
+| [`services/ingestion.py`](src/app/services/ingestion.py) | Chunking + the **background worker** that ingests an uploaded doc and updates its job |
+| [`repositories/jobs.py`](src/app/repositories/jobs.py) | `JobStore` interface + in-memory impl tracking ingestion job lifecycle |
+| [`routers/documents.py`](src/app/routers/documents.py) | **`POST /documents`** (202 + `BackgroundTasks`), `GET /jobs`, `GET /jobs/{id}` |
 | [`dependencies.py`](src/app/dependencies.py) | **Session-per-request** (`get_session` yield-dep) + per-request repositories |
 | [`routers/auth.py`](src/app/routers/auth.py) | **OAuth2 password flow**: `POST /auth/token` (login) + `GET /auth/me` |
 | [`routers/chat.py`](src/app/routers/chat.py) | **Per-user authorization** (own-conversation 403/404), a `GET /chat` listing, **SSE streaming** |
@@ -225,9 +245,11 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   Claude streaming via the official SDK), chosen by a factory. Heavy deps are an
   optional extra with lazy imports; routes/tests stay put. (Retrieval verified
   end-to-end with real embeddings; generation needs your `ANTHROPIC_API_KEY`.)
-- [ ] **Rung 6 — Background ingestion.** A `POST /documents` upload that chunks +
-  embeds in the background (`BackgroundTasks` → ARQ/Celery + Redis) with a
-  `GET /jobs/{id}` status endpoint.
+- [x] **Rung 6 — Background ingestion.** `POST /documents` returns 202 + a job id;
+  a `BackgroundTask` chunks + indexes the doc into the RAG backend; `GET /jobs/{id}`
+  / `GET /jobs` report status (owner-scoped). `JobStore` interface is built so the
+  execution can later swap to ARQ/Celery + Redis. Uploaded content is retrievable
+  via `/chat` once the job succeeds.
 - [ ] **Rung 7 — Rate limiting + caching.** Redis-backed per-user rate limits;
   cache retrievals.
 - [ ] **Rung 8 — Observability.** JSON logs carrying the request id, OpenTelemetry
@@ -249,11 +271,14 @@ src/app/
   dependencies.py           # DI: session-per-request + per-request repositories
   main.py                   # app factory + lifespan (engine, schema, seed) + middleware
   services/rag.py           # RagService ABC + mock & Anthropic (Chroma+Claude) backends
+  services/ingestion.py     # chunk_text + background ingestion worker
   repositories/conversations.py  # ConversationRepository: in-memory + SQLAlchemy
   repositories/users.py     # UserRepository: in-memory + SQLAlchemy
+  repositories/jobs.py      # JobStore: ingestion job lifecycle (in-memory)
   routers/health.py         # GET /health
   routers/auth.py           # POST /auth/token, GET /auth/me
   routers/chat.py           # GET /chat (list), POST /chat, POST /chat/stream, GET /chat/{id}/history
+  routers/documents.py      # POST /documents, GET /jobs, GET /jobs/{id}
 alembic/                    # migration environment + versions/
 alembic.ini                 # alembic config (URL comes from app settings)
 docker-compose.yml          # local Postgres for the production DB path

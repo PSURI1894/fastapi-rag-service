@@ -21,6 +21,7 @@ the answer is "I don't know" rather than a hallucination.
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 from app.config import Settings
 from app.schemas import Citation
@@ -61,6 +62,11 @@ class RagService(ABC):
     def stream_answer(self, question: str, citations: list[Citation]) -> AsyncIterator[str]:
         """Yield the answer one chunk at a time (an async generator)."""
 
+    @abstractmethod
+    async def index_document(self, source: str, chunks: list[str]) -> int:
+        """Add already-chunked passages to the knowledge base; return how many were
+        indexed. Called by the background ingestion worker (Rung 6)."""
+
     async def answer(self, question: str, citations: list[Citation]) -> str:
         """Non-streaming convenience: drain the stream into one string.
 
@@ -77,12 +83,15 @@ class MockRagService(RagService):
     def __init__(self, response_delay_ms: int = 40, top_k: int = 2) -> None:
         self._delay_s = response_delay_ms / 1000
         self._top_k = top_k
+        # A mutable copy of the seed corpus; ingestion appends to it, so uploaded
+        # documents become retrievable — the ingestion→retrieval loop, in memory.
+        self._corpus: list[tuple[str, str]] = list(_CORPUS)
 
     async def retrieve(self, question: str) -> list[Citation]:
         await asyncio.sleep(self._delay_s)  # imitate vector-search I/O
         query_words = {w.strip(".,?!").lower() for w in question.split()}
         scored: list[Citation] = []
-        for source, text in _CORPUS:
+        for source, text in self._corpus:
             doc_words = {w.strip(".,?!").lower() for w in text.split()}
             overlap = query_words & doc_words
             if not overlap:
@@ -98,6 +107,10 @@ class MockRagService(RagService):
         for token in self._compose(question, citations).split(" "):
             await asyncio.sleep(self._delay_s)  # imitate per-token generation
             yield token + " "
+
+    async def index_document(self, source: str, chunks: list[str]) -> int:
+        self._corpus.extend((source, chunk) for chunk in chunks)
+        return len(chunks)
 
     def _compose(self, question: str, citations: list[Citation]) -> str:
         if not citations:
@@ -173,6 +186,18 @@ class AnthropicRagService(RagService):
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+
+    async def index_document(self, source: str, chunks: list[str]) -> int:
+        if not chunks:
+            return 0
+        # collection.add embeds the chunks with the local model; run off-loop.
+        await asyncio.to_thread(
+            self._collection.add,
+            ids=[uuid4().hex for _ in chunks],
+            documents=chunks,
+            metadatas=[{"source": source} for _ in chunks],
+        )
+        return len(chunks)
 
 
 def build_rag_service(settings: Settings) -> RagService:

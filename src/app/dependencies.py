@@ -24,12 +24,17 @@ from app.repositories.conversations import (
     ConversationRepository,
     SqlAlchemyConversationRepository,
 )
+from app.repositories.jobs import JobStore
 from app.repositories.users import SqlAlchemyUserRepository, UserRepository
 from app.services.rag import RagService
 
 
 def get_rag_service(request: Request) -> RagService:
     return request.app.state.rag_service  # type: ignore[no-any-return]
+
+
+def get_job_store(request: Request) -> JobStore:
+    return request.app.state.job_store  # type: ignore[no-any-return]
 
 
 def get_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
