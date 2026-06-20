@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.4.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.5.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,6 +16,15 @@ dependencies = [
     "alembic>=1.14",
     "aiosqlite>=0.20",      # async SQLite driver (default / tests)
     "asyncpg>=0.30",        # async Postgres driver (production)
+]
+
+# Heavy, optional deps for the real RAG backend. Install with `uv sync --extra rag`.
+# The base service (and the whole test suite) runs without these — the mock backend
+# is the default and imports nothing from here.
+[project.optional-dependencies]
+rag = [
+    "anthropic>=0.40",     # official Anthropic SDK (answer generation)
+    "chromadb>=0.5",       # local vector store + key-less embedding model (retrieval)
 ]
 
 # uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).
@@ -69,3 +78,10 @@ extend-immutable-calls = [
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+
+# The `rag` extra isn't installed in the default dev/CI env, and these packages'
+# stubs are incomplete anyway — let the optional backend's lazy imports type-check
+# cleanly without them present.
+[[tool.mypy.overrides]]
+module = ["anthropic.*", "chromadb.*"]
+ignore_missing_imports = true

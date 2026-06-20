@@ -8,6 +8,7 @@ of blowing up deep in a request handler.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +49,18 @@ class Settings(BaseSettings):
     # known user at startup so you have credentials to log in with.
     demo_username: str = "demo"
     demo_password: str = "demo-password"
+
+    # --- RAG backend ---
+    # "mock" (default): keyword retrieval + templated answer; zero deps, no key.
+    # "anthropic": real semantic retrieval (Chroma) + Claude streaming. Needs the
+    # `rag` extra installed (`uv sync --extra rag`) and an ANTHROPIC_API_KEY.
+    rag_backend: Literal["mock", "anthropic"] = "mock"
+    anthropic_api_key: str | None = None
+    # Defaults to the most capable model. Switch to claude-sonnet-4-6 / claude-haiku-4-5
+    # if you want lower cost — that's a deliberate choice, not a silent default.
+    anthropic_model: str = "claude-opus-4-8"
+    anthropic_max_tokens: int = Field(default=1024, ge=1)
+    rag_top_k: int = Field(default=2, ge=1)
 
 
 @lru_cache

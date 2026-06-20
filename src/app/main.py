@@ -28,7 +28,7 @@ from app.logging_config import configure_logging
 from app.repositories.users import SqlAlchemyUserRepository, User
 from app.routers import auth, chat, health
 from app.security import hash_password
-from app.services.rag import RagService
+from app.services.rag import build_rag_service
 
 logger = logging.getLogger("app")
 
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Singletons that live for the whole process: the RAG service, and the DB
     # engine + session factory (the engine owns ONE connection pool — never make a
     # new engine per request).
-    app.state.rag_service = RagService(response_delay_ms=settings.llm_response_delay_ms)
+    app.state.rag_service = build_rag_service(settings)
     engine = create_engine(settings)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)

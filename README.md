@@ -1,15 +1,16 @@
 # FastAPI RAG Service — a learning project
 
-A **production-shaped** FastAPI service that serves a (mock) Retrieval-Augmented
-Generation assistant. The RAG core is faked so it runs instantly with **no API
-keys** (and zero DB setup — it defaults to a local SQLite file), but the
-*architecture* is the real thing — so every pattern you learn here transfers
-directly to a live LLM/RAG service.
+A **production-shaped** FastAPI service that serves a Retrieval-Augmented
+Generation assistant. It runs instantly with **no API keys** (a mock RAG backend
++ local SQLite by default), and flips to **real RAG** — semantic search over a
+Chroma vector store + answers streamed from Claude — by setting two env vars. The
+architecture is identical either way; only the backend swaps.
 
 > Built to level up **advanced Python + FastAPI**: async, Pydantic v2, dependency
 > injection, **OAuth2 + JWT auth**, **per-user authorization**, **async SQLAlchemy
-> persistence (SQLite/Postgres) with Alembic migrations**, SSE streaming, the
-> service/repository split, structured logging, middleware, and async testing.
+> persistence (SQLite/Postgres) with Alembic migrations**, **real RAG (Chroma +
+> Claude) behind a pluggable backend**, SSE streaming, the service/repository
+> split, structured logging, middleware, and async testing.
 
 ---
 
@@ -134,6 +135,35 @@ uv run alembic revision --autogenerate -m "add X"   # create a new migration
 
 ---
 
+## RAG backend (mock vs. real)
+
+`services/rag.py` defines a `RagService` interface with two implementations,
+selected by `RAG_BACKEND`:
+
+- **`mock`** (default) — keyword retrieval + a templated answer. Zero deps, no
+  key, deterministic. This is what the test suite runs against.
+- **`anthropic`** — **real RAG**: semantic search over a Chroma vector store
+  (key-less local embedding model) + the answer streamed from Claude via the
+  official `anthropic` SDK.
+
+Turn on the real backend:
+
+```bash
+uv sync --extra rag            # installs anthropic + chromadb (heavy)
+export RAG_BACKEND=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+# optional: export ANTHROPIC_MODEL=claude-sonnet-4-6   # cheaper than the default opus
+uv run uvicorn app.main:app --reload
+```
+
+(PowerShell: `$env:RAG_BACKEND="anthropic"`.) The routes, auth, persistence, and
+streaming are **unchanged** — only the service implementation swaps, because the
+streaming endpoint already consumes an async token iterator. Default model is
+`claude-opus-4-8` (most capable); switch to Sonnet/Haiku to cut cost. The first
+real call downloads a ~80 MB local embedding model (one-time).
+
+---
+
 ## How it's wired (read the code in this order)
 
 | File | Concept it teaches |
@@ -144,7 +174,7 @@ uv run alembic revision --autogenerate -m "add X"   # create a new migration
 | [`security.py`](src/app/security.py) | Password hashing (Argon2), JWT issue/verify, `get_current_user` dependency |
 | [`repositories/conversations.py`](src/app/repositories/conversations.py) | **Two impls of one interface**: in-memory *and* `SqlAlchemyConversationRepository` |
 | [`repositories/users.py`](src/app/repositories/users.py) | User store (in-memory + SQLAlchemy); internal `User` vs API `UserPublic` |
-| [`services/rag.py`](src/app/services/rag.py) | Business logic; **async generators** for token streaming |
+| [`services/rag.py`](src/app/services/rag.py) | **Pluggable RAG**: `RagService` ABC + mock & Anthropic backends, a factory, **async generators** for token streaming, **optional deps via lazy imports** |
 | [`dependencies.py`](src/app/dependencies.py) | **Session-per-request** (`get_session` yield-dep) + per-request repositories |
 | [`routers/auth.py`](src/app/routers/auth.py) | **OAuth2 password flow**: `POST /auth/token` (login) + `GET /auth/me` |
 | [`routers/chat.py`](src/app/routers/chat.py) | **Per-user authorization** (own-conversation 403/404), a `GET /chat` listing, **SSE streaming** |
@@ -190,9 +220,11 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   handlers inject `current_user` and only touch the caller's data (403 on
   someone else's, 404 if missing). Added `GET /chat` to list your own. Migration
   0002 adds the `owner_username` column + index + FK.
-- [ ] **Rung 5 — Real RAG.** Replace the body of `services/rag.py` with a vector
-  retriever (Chroma/pgvector) + `langchain-anthropic` streaming. The `async for`
-  shape is already correct, so routes/tests stay put.
+- [x] **Rung 5 — Real RAG.** `services/rag.py` is now a `RagService` ABC with a
+  mock backend (default) and an `AnthropicRagService` (Chroma semantic search +
+  Claude streaming via the official SDK), chosen by a factory. Heavy deps are an
+  optional extra with lazy imports; routes/tests stay put. (Retrieval verified
+  end-to-end with real embeddings; generation needs your `ANTHROPIC_API_KEY`.)
 - [ ] **Rung 6 — Background ingestion.** A `POST /documents` upload that chunks +
   embeds in the background (`BackgroundTasks` → ARQ/Celery + Redis) with a
   `GET /jobs/{id}` status endpoint.
@@ -216,7 +248,7 @@ src/app/
   security.py               # password hashing + JWT + get_current_user
   dependencies.py           # DI: session-per-request + per-request repositories
   main.py                   # app factory + lifespan (engine, schema, seed) + middleware
-  services/rag.py           # the (mock) RAG pipeline
+  services/rag.py           # RagService ABC + mock & Anthropic (Chroma+Claude) backends
   repositories/conversations.py  # ConversationRepository: in-memory + SQLAlchemy
   repositories/users.py     # UserRepository: in-memory + SQLAlchemy
   routers/health.py         # GET /health
