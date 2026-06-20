@@ -24,7 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.config import get_settings
 from app.db import create_all, create_engine, create_sessionmaker
-from app.logging_config import configure_logging
+from app.logging_config import configure_logging, request_id_var
+from app.metrics import Metrics
 from app.repositories.jobs import InMemoryJobStore
 from app.repositories.users import SqlAlchemyUserRepository, User
 from app.routers import auth, chat, documents, health
@@ -32,14 +33,24 @@ from app.security import hash_password
 from app.services.cache import build_cache
 from app.services.rag import build_rag_service
 from app.services.ratelimit import build_rate_limiter
+from app.tracing import setup_tracing
 
 logger = logging.getLogger("app")
+
+
+def _route_template(request: Request) -> str:
+    """The matched route's TEMPLATE (e.g. /chat/{conversation_id}/history), used as
+    a metrics label. Using the raw path would explode label cardinality — every id
+    would be its own time series. Unmatched paths (404s) collapse to 'unmatched'."""
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) else "unmatched"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.log_format)
 
     # Singletons that live for the whole process: the RAG service, and the DB
     # engine + session factory (the engine owns ONE connection pool — never make a
@@ -91,6 +102,9 @@ def create_app() -> FastAPI:
         summary="Serve a (mock) RAG assistant with streaming, auth, and clean layering.",
         lifespan=lifespan,
     )
+    # A plain object, no async setup — create it here so the middleware (which runs
+    # before lifespan-built singletons matter) always has it.
+    app.state.metrics = Metrics()
 
     # CORS: allow browser front-ends to call the API. Lock `allow_origins` down
     # to your real domains in production.
@@ -101,32 +115,45 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Middleware runs around every request. This one tags each request with an id
-    # and records how long it took — the foundation of request tracing.
+    # Observability middleware: stamp a request id (into a ContextVar so every log
+    # line in this request carries it), record metrics, and time the request.
     @app.middleware("http")
-    async def add_request_context(
+    async def observability_middleware(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request_id = uuid4().hex[:12]
+        token = request_id_var.set(request_id)
+        metrics: Metrics = app.state.metrics
+        metrics.inc_in_flight()
         start = time.perf_counter()
-        response = await call_next(request)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        response.headers["X-Request-ID"] = request_id
-        response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.1f}"
-        logger.info(
-            "%s %s -> %s (%.1fms) rid=%s",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed_ms,
-            request_id,
-        )
-        return response
+        status_code = 500  # default for the exception path (becomes a 500 response)
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.1f}"
+            return response
+        finally:
+            elapsed = time.perf_counter() - start
+            metrics.observe(request.method, _route_template(request), status_code, elapsed)
+            metrics.dec_in_flight()
+            logger.info(
+                "%s %s -> %s (%.1fms)",
+                request.method,
+                request.url.path,
+                status_code,
+                elapsed * 1000,
+            )
+            request_id_var.reset(token)
 
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(documents.router)
+
+    # Optional OpenTelemetry auto-instrumentation (no-op unless OTEL_ENABLED).
+    setup_tracing(app, get_settings())
     return app
 
 

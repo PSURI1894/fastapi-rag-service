@@ -1,34 +1,64 @@
-"""Structured-ish logging configuration.
+"""Structured logging with a request-id that follows the whole request.
 
-Real services log to stdout in a consistent, parseable format so a log
-aggregator (CloudWatch, Loki, Datadog) can index them. Here we keep it simple:
-one handler, one formatter, configured once at startup from `lifespan`.
+`request_id_var` is a ContextVar the middleware sets at the start of each request.
+`RequestIdFilter` copies it onto every log record, so *every* log line emitted
+while handling a request carries the same id — that's what lets you reconstruct
+one request's full story from JSON logs.
 
-The next lesson upgrade is true JSON logs + a per-request correlation id; the
-middleware in main.py already attaches a request id you could log here.
+`configure_logging(level, fmt)` installs one stdout handler. `fmt="json"` emits
+one JSON object per line (for a log aggregator); `fmt="console"` is the
+human-friendly format for local dev.
 """
 
+import json
 import logging
 import sys
+from contextvars import ContextVar
+
+# Default "-" so logs emitted outside any request (startup/shutdown) still format.
+request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
 
-def configure_logging(level: str = "INFO") -> None:
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Attach the current request id; JsonFormatter reads it back via getattr.
+        record.request_id = request_id_var.get()
+        return True
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "request_id": getattr(record, "request_id", "-"),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+
+def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S",
+    handler.addFilter(RequestIdFilter())
+    if fmt == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s | %(levelname)-8s | %(name)s | rid=%(request_id)s | %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
         )
-    )
 
     root = logging.getLogger()
-    # Clear pre-existing handlers so repeated app creation (e.g. in tests) doesn't
-    # stack duplicate handlers and double-print every line.
-    root.handlers.clear()
+    root.handlers.clear()  # avoid stacking duplicate handlers across app re-creation
     root.addHandler(handler)
     root.setLevel(level.upper())
 
-    # Uvicorn installs its own handlers; let our root config own formatting.
+    # Let our root config own formatting for uvicorn's loggers too.
     for noisy in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         logging.getLogger(noisy).handlers.clear()
         logging.getLogger(noisy).propagate = True

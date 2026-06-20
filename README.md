@@ -11,8 +11,8 @@ architecture is identical either way; only the backend swaps.
 > persistence (SQLite/Postgres) with Alembic migrations**, **real RAG (Chroma +
 > Claude) behind a pluggable backend**, **background document ingestion (upload →
 > job → poll)**, **per-user rate limiting + retrieval caching (in-memory or Redis)**,
-> SSE streaming, the service/repository split, structured logging, middleware, and
-> async testing.
+> **observability (JSON logs, Prometheus `/metrics`, optional OpenTelemetry)**, SSE
+> streaming, the service/repository split, middleware, and async testing.
 
 ---
 
@@ -204,6 +204,31 @@ export RATE_LIMIT_BACKEND=redis CACHE_BACKEND=redis
 
 ---
 
+## Observability (the three pillars)
+
+- **Logs** — structured **JSON** to stdout (`LOG_FORMAT=json`, or `console` for
+  local dev). The middleware stamps a request id into a `ContextVar`, so every log
+  line emitted during a request carries the same `request_id` — grep one id to
+  reconstruct a whole request.
+- **Metrics** — `GET /metrics` serves Prometheus text: a request counter, a latency
+  histogram, and an in-flight gauge, all labelled by the route *template* (not the
+  raw path, to bound cardinality). Always on, no dependencies.
+- **Traces** — optional **OpenTelemetry** auto-instrumentation (every request → a
+  span tree). Off by default; enable with:
+
+  ```bash
+  uv sync --extra otel
+  export OTEL_ENABLED=true
+  # prints spans to the console; or ship them somewhere:
+  # export OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel/v1/traces
+  uv run uvicorn app.main:app
+  ```
+
+  With no OTLP endpoint, spans print to the console. Point the endpoint at a
+  collector — or LangSmith's OTLP ingest — to centralise LLM/request traces.
+
+---
+
 ## How it's wired (read the code in this order)
 
 | File | Concept it teaches |
@@ -219,12 +244,15 @@ export RATE_LIMIT_BACKEND=redis CACHE_BACKEND=redis
 | [`services/cache.py`](src/app/services/cache.py) | `Cache` interface (in-memory / Redis / no-op) + `retrieve_cached` helper |
 | [`services/ratelimit.py`](src/app/services/ratelimit.py) | `RateLimiter` interface — **fixed-window** counter (in-memory / Redis) |
 | [`limits.py`](src/app/limits.py) | `enforce_rate_limit` dependency (429 + `Retry-After`); separate module to avoid an import cycle |
+| [`logging_config.py`](src/app/logging_config.py) | **JSON logs** + a `request_id` `ContextVar` + filter so every log line carries the id |
+| [`metrics.py`](src/app/metrics.py) | In-process **Prometheus** registry (counter/histogram/gauge) → `GET /metrics` |
+| [`tracing.py`](src/app/tracing.py) | Optional **OpenTelemetry** FastAPI auto-instrumentation (no-op unless enabled) |
 | [`repositories/jobs.py`](src/app/repositories/jobs.py) | `JobStore` interface + in-memory impl tracking ingestion job lifecycle |
 | [`routers/documents.py`](src/app/routers/documents.py) | **`POST /documents`** (202 + `BackgroundTasks`), `GET /jobs`, `GET /jobs/{id}` |
 | [`dependencies.py`](src/app/dependencies.py) | **Session-per-request** (`get_session` yield-dep) + per-request repositories |
 | [`routers/auth.py`](src/app/routers/auth.py) | **OAuth2 password flow**: `POST /auth/token` (login) + `GET /auth/me` |
 | [`routers/chat.py`](src/app/routers/chat.py) | **Per-user authorization** (own-conversation 403/404), a `GET /chat` listing, **SSE streaming** |
-| [`main.py`](src/app/main.py) | App factory, **lifespan** (opens engine, creates schema, seeds user), middleware |
+| [`main.py`](src/app/main.py) | App factory, **lifespan** (engine, schema, seed, rate-limit/cache), observability middleware (request-id + metrics), tracing setup |
 | [`alembic/`](alembic/) | Async migration env + the initial schema migration |
 | [`tests/`](tests/) | Async HTTP tests (in-memory SQLite) + `test_repository.py` (data layer in isolation) |
 
@@ -280,8 +308,11 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   `/chat` + `/documents` (429 + `Retry-After`) and retrieval caching, both behind
   interfaces with in-memory defaults and an optional Redis backend (`--extra redis`).
   Verified live (4th request → 429) and by unit tests (cache serves repeat queries).
-- [ ] **Rung 8 — Observability.** JSON logs carrying the request id, OpenTelemetry
-  traces, Prometheus metrics, LangSmith for LLM traces.
+- [x] **Rung 8 — Observability.** Structured JSON logs with a request-id that
+  propagates via a `ContextVar`; a Prometheus `/metrics` endpoint (counter +
+  latency histogram + in-flight gauge, route-template labels); optional
+  OpenTelemetry auto-instrumentation (`--extra otel`) exporting to console or OTLP
+  (collector / LangSmith). Verified live: spans, JSON logs, and `/metrics`.
 - [ ] **Rung 9 — Deploy.** The `Dockerfile` is here; add CI (GitHub Actions: ruff
   + mypy + pytest) and ship it (Gunicorn + Uvicorn workers).
 
@@ -291,8 +322,11 @@ Each rung adds ONE production layer; each is a self-contained lesson.
 
 ```
 src/app/
-  config.py                 # settings (incl. JWT, seed-user, and DB config)
-  logging_config.py         # logging setup
+  config.py                 # settings (JWT, DB, RAG, rate-limit/cache, observability)
+  logging_config.py         # JSON logs + request-id ContextVar/filter
+  metrics.py                # in-process Prometheus registry (/metrics)
+  tracing.py                # optional OpenTelemetry setup
+  limits.py                 # enforce_rate_limit dependency
   schemas.py                # Pydantic API models (ChatRequest, Token, UserPublic, …)
   db.py                     # SQLAlchemy async engine/sessionmaker + ORM models
   security.py               # password hashing + JWT + get_current_user

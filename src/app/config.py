@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     llm_response_delay_ms: int = Field(default=40, ge=0)
 
+    # --- Observability (Rung 8) ---
+    # "json" for production (structured, greppable); "console" for friendlier local logs.
+    log_format: Literal["json", "console"] = "json"
+    # OpenTelemetry tracing is opt-in and needs the `otel` extra. With no OTLP
+    # endpoint it prints spans to the console; point the endpoint at a collector or
+    # LangSmith to ship traces there.
+    otel_enabled: bool = False
+    otel_service_name: str = "fastapi-rag-service"
+    otel_exporter_otlp_endpoint: str | None = None
+
     # --- Database ---
     # SQLAlchemy async URL. Default is a zero-setup local SQLite file. For Postgres:
     #   postgresql+asyncpg://user:password@localhost:5432/ragdb

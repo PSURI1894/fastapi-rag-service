@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.metrics import Metrics
 from app.repositories.conversations import (
     ConversationRepository,
     SqlAlchemyConversationRepository,
@@ -45,6 +46,10 @@ def get_rate_limiter(request: Request) -> RateLimiter:
 
 def get_cache(request: Request) -> Cache:
     return request.app.state.cache  # type: ignore[no-any-return]
+
+
+def get_metrics(request: Request) -> Metrics:
+    return request.app.state.metrics  # type: ignore[no-any-return]
 
 
 def get_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:

@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.7.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, per-user rate limiting + caching (in-memory or Redis), SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.8.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, per-user rate limiting + caching (in-memory or Redis), observability (JSON logs, Prometheus metrics, optional OpenTelemetry), SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -30,6 +30,13 @@ rag = [
 # in-memory; install this only when RATE_LIMIT_BACKEND/CACHE_BACKEND = "redis".
 redis = [
     "redis>=5",
+]
+# OpenTelemetry tracing. Install only when OTEL_ENABLED=true. Exports to the
+# console by default, or OTLP (collector / LangSmith) when an endpoint is set.
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
 ]
 
 # uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).
@@ -90,5 +97,5 @@ files = ["src", "tests"]
 # stubs are incomplete anyway — let the optional backend's lazy imports type-check
 # cleanly without them present.
 [[tool.mypy.overrides]]
-module = ["anthropic.*", "chromadb.*", "redis.*"]
+module = ["anthropic.*", "chromadb.*", "redis.*", "opentelemetry.*"]
 ignore_missing_imports = true
