@@ -1,5 +1,7 @@
 # FastAPI RAG Service — a learning project
 
+[![CI](https://github.com/PSURI1894/fastapi-rag-service/actions/workflows/ci.yml/badge.svg)](https://github.com/PSURI1894/fastapi-rag-service/actions/workflows/ci.yml)
+
 A **production-shaped** FastAPI service that serves a Retrieval-Augmented
 Generation assistant. It runs instantly with **no API keys** (a mock RAG backend
 + local SQLite by default), and flips to **real RAG** — semantic search over a
@@ -313,8 +315,35 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   latency histogram + in-flight gauge, route-template labels); optional
   OpenTelemetry auto-instrumentation (`--extra otel`) exporting to console or OTLP
   (collector / LangSmith). Verified live: spans, JSON logs, and `/metrics`.
-- [ ] **Rung 9 — Deploy.** The `Dockerfile` is here; add CI (GitHub Actions: ruff
-  + mypy + pytest) and ship it (Gunicorn + Uvicorn workers).
+- [x] **Rung 9 — CI & deploy.** GitHub Actions runs ruff + mypy + pytest on every
+  push/PR; the Dockerfile is non-root with a healthcheck and runs migrations; a
+  `docker compose` stack brings up app + Postgres + Redis with one command.
+
+**The ladder is complete** — a production-shaped service from an empty directory.
+
+---
+
+## CI & deploy
+
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the gates —
+`ruff`, `mypy --strict`, `pytest` — on every push and PR (the badge above).
+
+**Run the whole stack** (app + Postgres + Redis) with Docker:
+
+```bash
+docker compose up --build         # → http://localhost:8000/docs
+```
+
+The app container runs `alembic upgrade head` on boot (`DB_AUTO_CREATE=false`),
+uses the **Redis-backed** rate-limit/cache (so it behaves like a multi-worker
+deployment), and runs as a **non-root** user with a container `HEALTHCHECK` on
+`/health`. It uses the mock RAG backend by default — no API key needed.
+
+**Production notes:** scale with multiple uvicorn workers or replicas *only* with
+the Redis backends enabled (in-memory state is per-process); set a strong
+`JWT_SECRET_KEY`; manage the schema with `alembic upgrade head` rather than
+`DB_AUTO_CREATE`; build with `--extra rag` / `--extra otel` if you want real RAG
+or tracing in the image.
 
 ---
 

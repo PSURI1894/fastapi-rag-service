@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.8.0"
+version = "1.0.0"
 description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, per-user rate limiting + caching (in-memory or Redis), observability (JSON logs, Prometheus metrics, optional OpenTelemetry), SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -1,14 +1,33 @@
-# Local Postgres for developing against the "real" production database.
+# Full local stack: the app + Postgres + Redis.
 #
-#   docker compose up -d
-#   # point the app at it:
-#   export DATABASE_URL="postgresql+asyncpg://rag:ragpw@localhost:5432/ragdb"
-#   export DB_AUTO_CREATE=false
-#   uv run alembic upgrade head        # create the schema via migrations
-#   uv run uvicorn app.main:app --reload
+#   docker compose up --build
+#   # → http://localhost:8000/docs   (seed login: demo / demo-password)
 #
-# (PowerShell: use `$env:DATABASE_URL = "..."` instead of `export`.)
+# The app runs migrations on boot (DB_AUTO_CREATE=false) and uses the Redis-backed
+# rate-limit/cache so it behaves like a multi-worker deployment. It uses the mock
+# RAG backend by default — set RAG_BACKEND=anthropic + ANTHROPIC_API_KEY (and build
+# with the `rag` extra) to use real RAG.
 services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://rag:ragpw@db:5432/ragdb
+      DB_AUTO_CREATE: "false"          # migrations own the schema in prod
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_BACKEND: redis
+      CACHE_BACKEND: redis
+      LOG_FORMAT: json
+    command: >
+      sh -c "uv run alembic upgrade head &&
+             uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   db:
     image: postgres:17
     environment:
@@ -21,6 +40,16 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rag -d ragdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -14,4 +14,4 @@ one file you can read top-to-bottom:
     main.py          -> the app factory that assembles all of the above
 """
 
-__version__ = "0.8.0"
+__version__ = "1.0.0"

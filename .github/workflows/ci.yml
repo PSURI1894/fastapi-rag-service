@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs uv and the project's pinned Python (.python-version = 3.13).
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      # Base + dev dependencies (no optional extras) — the canonical test env.
+      # The mock RAG backend and in-memory limit/cache run without any extra.
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy
+
+      - name: Test (pytest)
+        run: uv run pytest
