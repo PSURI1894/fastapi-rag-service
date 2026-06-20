@@ -25,7 +25,9 @@ from app import __version__
 from app.config import get_settings
 from app.logging_config import configure_logging
 from app.repositories.conversations import InMemoryConversationRepository
-from app.routers import chat, health
+from app.repositories.users import InMemoryUserRepository, User
+from app.routers import auth, chat, health
+from app.security import hash_password
 from app.services.rag import RagService
 
 logger = logging.getLogger("app")
@@ -40,6 +42,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # open the connection pool.
     app.state.repository = InMemoryConversationRepository()
     app.state.rag_service = RagService(response_delay_ms=settings.llm_response_delay_ms)
+
+    # Seed the user store with one known user so there are credentials to log in
+    # with. We hash the password at startup — the plaintext never gets stored.
+    user_repository = InMemoryUserRepository()
+    await user_repository.add(
+        User(
+            username=settings.demo_username,
+            hashed_password=hash_password(settings.demo_password),
+            full_name="Demo User",
+        )
+    )
+    app.state.user_repository = user_repository
 
     logger.info("startup complete env=%s version=%s", settings.app_env, __version__)
     yield
@@ -87,6 +101,7 @@ def create_app() -> FastAPI:
         return response
 
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(chat.router)
     return app
 

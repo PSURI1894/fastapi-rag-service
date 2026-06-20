@@ -14,6 +14,7 @@ design pattern — lean on it.
 from fastapi import Request
 
 from app.repositories.conversations import ConversationRepository
+from app.repositories.users import UserRepository
 from app.services.rag import RagService
 
 
@@ -23,3 +24,7 @@ def get_repository(request: Request) -> ConversationRepository:
 
 def get_rag_service(request: Request) -> RagService:
     return request.app.state.rag_service  # type: ignore[no-any-return]
+
+
+def get_user_repository(request: Request) -> UserRepository:
+    return request.app.state.user_repository  # type: ignore[no-any-return]

@@ -27,11 +27,14 @@ from fastapi.responses import StreamingResponse
 from app.dependencies import get_rag_service, get_repository
 from app.repositories.conversations import ConversationRepository
 from app.schemas import ChatRequest, ChatResponse, Message
-from app.security import require_api_key
+from app.security import get_current_user
 from app.services.rag import RagService
 
-# dependencies=[Depends(require_api_key)] applies auth to EVERY route below.
-router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_api_key)])
+# dependencies=[Depends(get_current_user)] applies JWT auth to EVERY route below.
+# (We don't need the user object in these handlers yet — we only need to require a
+# valid token. Inject `current_user: UserPublic = Depends(get_current_user)` into a
+# handler when you want to scope data per user — that's the next enhancement.)
+router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(get_current_user)])
 
 
 async def _resolve_conversation(req: ChatRequest, repo: ConversationRepository) -> str:

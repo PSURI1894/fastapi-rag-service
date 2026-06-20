@@ -45,3 +45,21 @@ class HealthResponse(BaseModel):
     status: str
     env: str
     version: str
+
+
+class Token(BaseModel):
+    """The response body of POST /auth/token. `token_type: "bearer"` tells the
+    client to send the token as `Authorization: Bearer <access_token>`."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserPublic(BaseModel):
+    """The SAFE view of a user. Note what's missing: `hashed_password`. The
+    storage model (repositories/users.py `User`) has it; this API-facing model
+    never does — so a password hash can't accidentally leak through a response."""
+
+    username: str
+    full_name: str | None = None
+    disabled: bool = False

@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.1.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, API-key auth, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.2.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: SSE streaming, OAuth2 + JWT auth, dependency injection, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,6 +9,9 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
+    "pyjwt>=2.10",
+    "pwdlib[argon2]>=0.2.1",
+    "python-multipart>=0.0.18",
 ]
 
 # uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).

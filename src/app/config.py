@@ -23,10 +23,21 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "local"
-    # Field(min_length=8) => a too-short key is rejected at startup, not at request time.
-    api_key: str = Field(default="dev-secret-key-change-me", min_length=8)
     log_level: str = "INFO"
     llm_response_delay_ms: int = Field(default=40, ge=0)
+
+    # --- JWT auth ---
+    # The signing secret. In prod, generate with `openssl rand -hex 32` and inject
+    # via env — NEVER commit a real one. min_length guards against a weak key.
+    jwt_secret_key: str = Field(default="dev-only-insecure-change-me-please", min_length=16)
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = Field(default=30, ge=1)
+
+    # --- Seed user (learning project only) ---
+    # A real app stores users in a DB with a registration flow. Here we seed one
+    # known user at startup so you have credentials to log in with.
+    demo_username: str = "demo"
+    demo_password: str = "demo-password"
 
 
 @lru_cache

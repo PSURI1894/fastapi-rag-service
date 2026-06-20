@@ -1,23 +1,33 @@
 """Chat endpoint tests: auth, the blocking route, SSE streaming, and history.
 
 These double as documentation — read them to see exactly how a client uses the API.
+Every protected call now carries a JWT via the `auth_headers` fixture (conftest.py).
 """
 
 from httpx import AsyncClient
 
-HEADERS = {"X-API-Key": "dev-secret-key-change-me"}  # matches config default
 
-
-async def test_chat_requires_api_key(client: AsyncClient) -> None:
-    # No X-API-Key header -> blocked by the require_api_key dependency.
+async def test_chat_requires_auth(client: AsyncClient) -> None:
+    # No Authorization header -> blocked by the get_current_user dependency.
     resp = await client.post("/chat", json={"question": "What is the refund policy?"})
     assert resp.status_code == 401
 
 
-async def test_chat_returns_answer_and_citations(client: AsyncClient) -> None:
+async def test_chat_rejects_bogus_token(client: AsyncClient) -> None:
     resp = await client.post(
         "/chat",
-        headers=HEADERS,
+        headers={"Authorization": "Bearer not-a-real-jwt"},
+        json={"question": "What is the refund policy?"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_chat_returns_answer_and_citations(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    resp = await client.post(
+        "/chat",
+        headers=auth_headers,
         json={"question": "What is the refund window for damaged goods?"},
     )
     assert resp.status_code == 200
@@ -29,11 +39,13 @@ async def test_chat_returns_answer_and_citations(client: AsyncClient) -> None:
     assert 0.0 <= body["citations"][0]["score"] <= 1.0
 
 
-async def test_unknown_question_triggers_guardrail(client: AsyncClient) -> None:
+async def test_unknown_question_triggers_guardrail(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
     # Nothing in the corpus overlaps -> the "I don't know" guardrail fires.
     resp = await client.post(
         "/chat",
-        headers=HEADERS,
+        headers=auth_headers,
         json={"question": "zzqq xylophone quark?"},
     )
     assert resp.status_code == 200
@@ -42,26 +54,30 @@ async def test_unknown_question_triggers_guardrail(client: AsyncClient) -> None:
     assert "don't know" in body["answer"].lower()
 
 
-async def test_validation_rejects_empty_question(client: AsyncClient) -> None:
+async def test_validation_rejects_empty_question(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
     # min_length=1 on the schema -> 422 Unprocessable Entity, handled by FastAPI.
-    resp = await client.post("/chat", headers=HEADERS, json={"question": ""})
+    resp = await client.post("/chat", headers=auth_headers, json={"question": ""})
     assert resp.status_code == 422
 
 
-async def test_conversation_is_persisted_and_continuable(client: AsyncClient) -> None:
+async def test_conversation_is_persisted_and_continuable(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
     first = await client.post(
-        "/chat", headers=HEADERS, json={"question": "What is the refund policy?"}
+        "/chat", headers=auth_headers, json={"question": "What is the refund policy?"}
     )
     cid = first.json()["conversation_id"]
 
     # Continue the same conversation by passing its id back.
     await client.post(
         "/chat",
-        headers=HEADERS,
+        headers=auth_headers,
         json={"question": "And the warranty coverage?", "conversation_id": cid},
     )
 
-    history = await client.get(f"/chat/{cid}/history", headers=HEADERS)
+    history = await client.get(f"/chat/{cid}/history", headers=auth_headers)
     assert history.status_code == 200
     messages = history.json()
     # 2 user turns + 2 assistant turns.
@@ -70,15 +86,19 @@ async def test_conversation_is_persisted_and_continuable(client: AsyncClient) ->
     assert messages[1]["role"] == "assistant"
 
 
-async def test_history_404_for_unknown_conversation(client: AsyncClient) -> None:
-    resp = await client.get("/chat/does-not-exist/history", headers=HEADERS)
+async def test_history_404_for_unknown_conversation(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    resp = await client.get("/chat/does-not-exist/history", headers=auth_headers)
     assert resp.status_code == 404
 
 
-async def test_streaming_emits_sse_events(client: AsyncClient) -> None:
+async def test_streaming_emits_sse_events(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
     resp = await client.post(
         "/chat/stream",
-        headers=HEADERS,
+        headers=auth_headers,
         json={"question": "What is the refund window for damaged goods?"},
     )
     assert resp.status_code == 200
