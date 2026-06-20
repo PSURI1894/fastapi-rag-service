@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     chunk_words: int = Field(default=120, ge=1)
     chunk_overlap: int = Field(default=20, ge=0)
 
+    # --- Rate limiting & caching (Rung 7) ---
+    # Backends default to in-memory (per-process). Set REDIS_URL and the backend to
+    # "redis" to share limits/cache across workers; needs the `redis` extra.
+    redis_url: str | None = None
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = Field(default=30, ge=1)
+    rate_limit_backend: Literal["memory", "redis"] = "memory"
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = Field(default=60, ge=1)
+    cache_backend: Literal["memory", "redis"] = "memory"
+
 
 @lru_cache
 def get_settings() -> Settings:

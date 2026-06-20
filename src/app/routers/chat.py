@@ -21,16 +21,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.dependencies import get_rag_service, get_repository, get_sessionmaker
+from app.config import Settings, get_settings
+from app.dependencies import get_cache, get_rag_service, get_repository, get_sessionmaker
+from app.limits import enforce_rate_limit
 from app.repositories.conversations import (
     ConversationRepository,
     SqlAlchemyConversationRepository,
 )
 from app.schemas import ChatRequest, ChatResponse, ConversationSummary, Message, UserPublic
 from app.security import get_current_user
+from app.services.cache import Cache, retrieve_cached
 from app.services.rag import RagService
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+# Every route here also enforces a per-user rate limit (429 when exceeded).
+router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(enforce_rate_limit)])
 
 
 async def _authorize_conversation(
@@ -77,12 +81,14 @@ async def chat(
     current_user: UserPublic = Depends(get_current_user),
     repo: ConversationRepository = Depends(get_repository),
     rag: RagService = Depends(get_rag_service),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
-    """Blocking chat: retrieve, generate the whole answer, persist, return JSON."""
+    """Blocking chat: retrieve (cached), generate the answer, persist, return JSON."""
     conversation_id = await _resolve_conversation(req, current_user.username, repo)
     await repo.add_message(conversation_id, "user", req.question)
 
-    citations = await rag.retrieve(req.question)
+    citations = await retrieve_cached(cache, rag, req.question, settings.cache_ttl_seconds)
     answer = await rag.answer(req.question, citations)
 
     await repo.add_message(conversation_id, "assistant", answer)
@@ -100,6 +106,8 @@ async def chat_stream(
     current_user: UserPublic = Depends(get_current_user),
     sessionmaker: async_sessionmaker[AsyncSession] = Depends(get_sessionmaker),
     rag: RagService = Depends(get_rag_service),
+    cache: Cache = Depends(get_cache),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Streaming chat over SSE: meta (citations) first, then tokens, then done.
 
@@ -118,7 +126,7 @@ async def chat_stream(
 
     async def event_generator() -> AsyncIterator[str]:
         # 1) Send retrieval results up front so the UI can show sources immediately.
-        citations = await rag.retrieve(req.question)
+        citations = await retrieve_cached(cache, rag, req.question, settings.cache_ttl_seconds)
         yield _sse(
             "meta",
             {"conversation_id": conversation_id, "citations": [c.model_dump() for c in citations]},

@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-rag-service"
-version = "0.6.0"
-description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
+version = "0.7.0"
+description = "A production-shaped FastAPI service for serving a RAG/LLM assistant: real RAG (Chroma + Claude) behind a pluggable backend, background document ingestion, per-user rate limiting + caching (in-memory or Redis), SSE streaming, OAuth2 + JWT auth, per-user authorization, async SQLAlchemy persistence (SQLite/Postgres) with Alembic, DI, service/repository layering, structured logging, and async tests. Built as a learning project."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -25,6 +25,11 @@ dependencies = [
 rag = [
     "anthropic>=0.40",     # official Anthropic SDK (answer generation)
     "chromadb>=0.5",       # local vector store + key-less embedding model (retrieval)
+]
+# Shared rate-limit/cache backend across worker processes. Default backends are
+# in-memory; install this only when RATE_LIMIT_BACKEND/CACHE_BACKEND = "redis".
+redis = [
+    "redis>=5",
 ]
 
 # uv reads this group for `uv sync` (dev tooling kept out of the shipped wheel).
@@ -85,5 +90,5 @@ files = ["src", "tests"]
 # stubs are incomplete anyway — let the optional backend's lazy imports type-check
 # cleanly without them present.
 [[tool.mypy.overrides]]
-module = ["anthropic.*", "chromadb.*"]
+module = ["anthropic.*", "chromadb.*", "redis.*"]
 ignore_missing_imports = true

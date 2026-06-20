@@ -14,13 +14,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 
 from app.config import Settings, get_settings
 from app.dependencies import get_job_store, get_rag_service
+from app.limits import enforce_rate_limit
 from app.repositories.jobs import Job, JobStore
 from app.schemas import DocumentAccepted, JobPublic, UserPublic
 from app.security import get_current_user
 from app.services.ingestion import run_ingestion
 from app.services.rag import RagService
 
-router = APIRouter(tags=["documents"])
+# Per-user rate limit applies to uploads and job polling too.
+router = APIRouter(tags=["documents"], dependencies=[Depends(enforce_rate_limit)])
 
 
 def _to_public(job: Job) -> JobPublic:

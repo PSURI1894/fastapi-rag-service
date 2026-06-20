@@ -29,7 +29,9 @@ from app.repositories.jobs import InMemoryJobStore
 from app.repositories.users import SqlAlchemyUserRepository, User
 from app.routers import auth, chat, documents, health
 from app.security import hash_password
+from app.services.cache import build_cache
 from app.services.rag import build_rag_service
+from app.services.ratelimit import build_rate_limiter
 
 logger = logging.getLogger("app")
 
@@ -44,6 +46,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # new engine per request).
     app.state.rag_service = build_rag_service(settings)
     app.state.job_store = InMemoryJobStore()
+    app.state.rate_limiter = build_rate_limiter(settings)
+    app.state.cache = build_cache(settings)
     engine = create_engine(settings)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
@@ -75,6 +79,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     # --- shutdown ---
     await engine.dispose()
+    await app.state.rate_limiter.close()
+    await app.state.cache.close()
     logger.info("shutdown complete")
 
 

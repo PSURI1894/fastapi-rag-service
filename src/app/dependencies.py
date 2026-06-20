@@ -26,7 +26,9 @@ from app.repositories.conversations import (
 )
 from app.repositories.jobs import JobStore
 from app.repositories.users import SqlAlchemyUserRepository, UserRepository
+from app.services.cache import Cache
 from app.services.rag import RagService
+from app.services.ratelimit import RateLimiter
 
 
 def get_rag_service(request: Request) -> RagService:
@@ -35,6 +37,14 @@ def get_rag_service(request: Request) -> RagService:
 
 def get_job_store(request: Request) -> JobStore:
     return request.app.state.job_store  # type: ignore[no-any-return]
+
+
+def get_rate_limiter(request: Request) -> RateLimiter:
+    return request.app.state.rate_limiter  # type: ignore[no-any-return]
+
+
+def get_cache(request: Request) -> Cache:
+    return request.app.state.cache  # type: ignore[no-any-return]
 
 
 def get_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:

@@ -10,8 +10,9 @@ architecture is identical either way; only the backend swaps.
 > injection, **OAuth2 + JWT auth**, **per-user authorization**, **async SQLAlchemy
 > persistence (SQLite/Postgres) with Alembic migrations**, **real RAG (Chroma +
 > Claude) behind a pluggable backend**, **background document ingestion (upload →
-> job → poll)**, SSE streaming, the service/repository split, structured logging,
-> middleware, and async testing.
+> job → poll)**, **per-user rate limiting + retrieval caching (in-memory or Redis)**,
+> SSE streaming, the service/repository split, structured logging, middleware, and
+> async testing.
 
 ---
 
@@ -181,6 +182,28 @@ real call downloads a ~80 MB local embedding model (one-time).
 
 ---
 
+## Rate limiting & caching
+
+Both are **per-user** and default to **in-memory** (zero setup). The expensive
+routers (`/chat`, `/documents`) enforce a fixed-window rate limit — exceed it and
+you get **429** with a `Retry-After` header. Retrieval results are cached (keyed by
+the normalised question) so identical queries skip the embedding + search; the TTL
+is short to bound staleness after a new document is ingested.
+
+To share limits and cache **across worker processes**, point them at Redis:
+
+```bash
+uv sync --extra redis
+export REDIS_URL=redis://localhost:6379/0
+export RATE_LIMIT_BACKEND=redis CACHE_BACKEND=redis
+```
+
+(PowerShell: `$env:REDIS_URL="redis://localhost:6379/0"`.) Tune with
+`RATE_LIMIT_PER_MINUTE`, `CACHE_TTL_SECONDS`, or disable either with
+`RATE_LIMIT_ENABLED=false` / `CACHE_ENABLED=false`.
+
+---
+
 ## How it's wired (read the code in this order)
 
 | File | Concept it teaches |
@@ -193,6 +216,9 @@ real call downloads a ~80 MB local embedding model (one-time).
 | [`repositories/users.py`](src/app/repositories/users.py) | User store (in-memory + SQLAlchemy); internal `User` vs API `UserPublic` |
 | [`services/rag.py`](src/app/services/rag.py) | **Pluggable RAG**: `RagService` ABC + mock & Anthropic backends, a factory, **async generators** for token streaming, **optional deps via lazy imports** |
 | [`services/ingestion.py`](src/app/services/ingestion.py) | Chunking + the **background worker** that ingests an uploaded doc and updates its job |
+| [`services/cache.py`](src/app/services/cache.py) | `Cache` interface (in-memory / Redis / no-op) + `retrieve_cached` helper |
+| [`services/ratelimit.py`](src/app/services/ratelimit.py) | `RateLimiter` interface — **fixed-window** counter (in-memory / Redis) |
+| [`limits.py`](src/app/limits.py) | `enforce_rate_limit` dependency (429 + `Retry-After`); separate module to avoid an import cycle |
 | [`repositories/jobs.py`](src/app/repositories/jobs.py) | `JobStore` interface + in-memory impl tracking ingestion job lifecycle |
 | [`routers/documents.py`](src/app/routers/documents.py) | **`POST /documents`** (202 + `BackgroundTasks`), `GET /jobs`, `GET /jobs/{id}` |
 | [`dependencies.py`](src/app/dependencies.py) | **Session-per-request** (`get_session` yield-dep) + per-request repositories |
@@ -250,8 +276,10 @@ Each rung adds ONE production layer; each is a self-contained lesson.
   / `GET /jobs` report status (owner-scoped). `JobStore` interface is built so the
   execution can later swap to ARQ/Celery + Redis. Uploaded content is retrievable
   via `/chat` once the job succeeds.
-- [ ] **Rung 7 — Rate limiting + caching.** Redis-backed per-user rate limits;
-  cache retrievals.
+- [x] **Rung 7 — Rate limiting + caching.** Per-user fixed-window rate limit on
+  `/chat` + `/documents` (429 + `Retry-After`) and retrieval caching, both behind
+  interfaces with in-memory defaults and an optional Redis backend (`--extra redis`).
+  Verified live (4th request → 429) and by unit tests (cache serves repeat queries).
 - [ ] **Rung 8 — Observability.** JSON logs carrying the request id, OpenTelemetry
   traces, Prometheus metrics, LangSmith for LLM traces.
 - [ ] **Rung 9 — Deploy.** The `Dockerfile` is here; add CI (GitHub Actions: ruff
@@ -272,6 +300,9 @@ src/app/
   main.py                   # app factory + lifespan (engine, schema, seed) + middleware
   services/rag.py           # RagService ABC + mock & Anthropic (Chroma+Claude) backends
   services/ingestion.py     # chunk_text + background ingestion worker
+  services/cache.py         # Cache ABC (in-memory/Redis/no-op) + retrieve_cached
+  services/ratelimit.py     # RateLimiter ABC (fixed-window; in-memory/Redis)
+  limits.py                 # enforce_rate_limit dependency (429 + Retry-After)
   repositories/conversations.py  # ConversationRepository: in-memory + SQLAlchemy
   repositories/users.py     # UserRepository: in-memory + SQLAlchemy
   repositories/jobs.py      # JobStore: ingestion job lifecycle (in-memory)
